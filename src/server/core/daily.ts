@@ -123,23 +123,22 @@ function stickyText(session: string): string {
     .map((t) => `${t.city} ${t.time}${t.nextDay ? ' (next day)' : ''}`)
     .join(' · ');
 
+  // Paragraphs, joined by blank lines: Reddit's markdown ignores a single
+  // newline, so anything joined by one would run together on the page.
   return [
-    '**Want a different chart up here? Ask for it.**',
-    '',
-    `Write the ticker with a dollar sign, in capitals: **\`$GOOGL\`**, **\`$NVDA\`**, **\`$BRK.B\`**.`,
-    'Every mention is a vote, and the eight best-supported tickers take the eight small panels.',
-    `${INDEX.name} always keeps the big one.`,
-    '',
-    '`GOOGL`, `googl`, `$googl` and `Google` do not count - the `$` and the capitals are both required.',
-    'A ticker the data provider does not recognise is ignored.',
-    '',
-    `**Comments are counted until ${MARKET_CLOSE_ET} New York time**, when the market closes and this post is sealed.`,
-    `That is ${elsewhere}.`,
-    '',
-    'Tomorrow the board resets and the race starts again from zero.',
-    '',
+    'Write the ticker with a dollar sign, in capitals: $GOOGL, $NVDA, $BRK.B.' +
+      ' Every mention is a vote, and the eight best-supported tickers take the' +
+      ` eight small panels. ${INDEX.name} always keeps the big one.`,
+
+    'GOOGL, googl, $googl and Google do not count.',
+
+    `Comments are counted until ${MARKET_CLOSE_ET} New York time, when the` +
+      ` market closes and this post is sealed. That is ${elsewhere}.`,
+
+    'On the next market open, the board resets and the race starts again from zero.',
+
     'Data from Yahoo Finance. Nothing here is investment advice.',
-  ].join('\n');
+  ].join('\n\n');
 }
 
 export type DailyBuild = {
