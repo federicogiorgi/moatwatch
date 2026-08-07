@@ -27,4 +27,11 @@ jobs:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
     - run: npm ci
+    - run: npm run type-check
+    - run: npm run lint
     - run: npm run build
+    # The offline suites: timezone, lifecycle, subtitle, charts. Deliberately
+    # NOT `npm run check:live` - that hits the real Yahoo endpoint, so it would
+    # fail on weekends, on market holidays, and on any vendor hiccup, none of
+    # which say anything about the commit being tested.
+    - run: npm run check

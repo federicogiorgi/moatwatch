@@ -12,28 +12,22 @@
  * post that has already closed - can be tested exhaustively.
  */
 
-import { context, redis, reddit, scheduler } from '@devvit/web/server';
+import { context, redis, reddit } from '@devvit/web/server';
 import { dayChangePct, renderCharts } from '../../shared/charts';
 import type { ChartsPayload, SeriesMap } from '../../shared/charts';
 import { isSessionComplete, todayEastern } from '../../shared/clock';
 import { decideAction } from '../../shared/lifecycle';
-import { ORDER, CHUNKS, FINAL_PASS } from '../../shared/watchlist';
-import { fetchChunk } from '../prices';
+import { ORDER } from '../../shared/watchlist';
+import { fetchAll } from '../prices';
 
 /** Redis key holding the rendered chart payload for a given post. */
 export const chartsKey = (postId: string) => `charts:${postId}`;
-
-/** Partial result accumulated by earlier passes. */
-const PENDING_KEY = 'pendingSeries';
 
 /** The post currently being tracked live: {"session","postId"}. */
 const LIVE_POST_KEY = 'livePost';
 
 /** The last session sealed. Nothing for this session is ever written again. */
 const FINALIZED_KEY = 'finalizedSession';
-
-/** Task name for the manual chain's follow-up passes, from devvit.json. */
-export const NEXT_PASS_TASK = 'daily-charts-next-pass';
 
 export type DailyBuild = {
   charts: ChartsPayload;
@@ -223,36 +217,26 @@ async function reconcile(series: SeriesMap): Promise<string | null> {
 }
 
 /**
- * Run one pass: fetch its chunk, merge into the accumulator, and on the final
- * pass act on the result.
+ * One pass: fetch the whole watchlist, then act on it.
+ *
+ * There is no accumulator and no partial state. The previous design fetched
+ * three symbols per pass and merged them in Redis across three scheduled
+ * passes, which meant the grid spent three minutes half-built and, if a deploy
+ * landed inside that window, merged symbols from two different watchlists into
+ * a single post. Fetching everything in one pass removes the shared state that
+ * made both possible.
  *
  * `force` republishes a session already sealed - the mod menu's force item
  * only. Scheduled runs never set it.
  */
-export async function runPass(
-  index: number,
-  force = false
-): Promise<string | null> {
-  const chunk = CHUNKS[index];
-  if (!chunk) throw new Error(`No chunk at index ${index}`);
-
-  const { series: fetched, failed } = await fetchChunk(chunk);
+export async function runPass(force = false): Promise<string | null> {
+  const { series, failed } = await fetchAll(ORDER);
   if (failed.length > 0) {
-    console.warn(`Pass ${index} problems: ${failed.join('; ')}`);
+    console.warn(`Fetch problems: ${failed.join('; ')}`);
   }
 
-  const parked = index === 0 ? null : ((await redis.get(PENDING_KEY)) ?? null);
-  const merged: SeriesMap = {
-    ...(parked ? (JSON.parse(parked) as SeriesMap) : {}),
-    ...fetched,
-  };
-  await redis.set(PENDING_KEY, JSON.stringify(merged));
-  console.log(
-    `Pass ${index} fetched ${Object.keys(fetched).length}, ` +
-      `${Object.keys(merged).length}/${ORDER.length} symbols held.`
-  );
-
-  if (index !== FINAL_PASS) return null;
+  const held = ORDER.filter((s) => (series[s]?.points.length ?? 0) > 0).length;
+  console.log(`Fetched ${held}/${ORDER.length} symbols.`);
 
   if (force) {
     // Deliberately bypasses the whole lifecycle: publish a fresh closed post
@@ -262,31 +246,15 @@ export async function runPass(
     await redis.del(LIVE_POST_KEY);
   }
 
-  return reconcile(merged);
-}
-
-/** Book the next pass in a manually started chain. */
-export async function scheduleNextPass(
-  index: number,
-  force: boolean
-): Promise<void> {
-  await scheduler.runJob({
-    name: NEXT_PASS_TASK,
-    data: { index, force, chain: true },
-    runAt: new Date(Date.now() + 90 * 1000),
-  });
-  console.log(`Pass ${index} booked in 90s (force=${force}).`);
+  return reconcile(series);
 }
 
 /**
- * Manual trigger: run the first pass now and chain the rest.
- *
- * Each pass books the next rather than scheduling all of them up front, so the
- * vendor's per-minute window has rolled over between chunks even if a pass
- * runs slowly.
+ * Manual trigger. A single pass now fits inside one handler, so there is no
+ * chain to book and nothing to wait for.
  */
-export async function triggerManualRun(force = false): Promise<void> {
-  await runPass(0, force);
-  await scheduleNextPass(1, force);
-  console.log(`Manual run (force=${force}): pass 0 done.`);
+export async function triggerManualRun(force = false): Promise<string | null> {
+  const postId = await runPass(force);
+  console.log(`Manual run (force=${force}) complete.`);
+  return postId;
 }

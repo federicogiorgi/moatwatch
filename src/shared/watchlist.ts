@@ -44,25 +44,11 @@ export const NAMES: Readonly<Record<string, string>> = Object.fromEntries(
 );
 
 /**
- * The watchlist is fetched in three chunks, minutes apart.
+ * The watchlist is fetched in one pass. There is no chunking any more.
  *
- * Polygon's free tier allows 5 API calls per minute and has no multi-symbol
- * aggregates endpoint, so nine symbols cannot be fetched inside one minute.
- * Devvit's 30 second HTTP handler limit rules out waiting the window out
- * in-process, so the split is across scheduled passes instead.
- *
- * Three chunks of three, not two of five and four. Five sits exactly at the
- * per-minute cap with no headroom, and in practice that failed: a burst of
- * five got `HTTP 429` from Polygon on the first symbol and then
- * `not allowed due to too many requests` from Devvit's own fetch limiter on
- * the remaining four. Three leaves room for an overlapping retry or a stray
- * manual trigger without any request being refused.
+ * It used to be split into three chunks across three scheduled passes, because
+ * Polygon's free tier allowed five calls a minute and nine symbols could not
+ * fit inside one. That vendor is long gone; Yahoo publishes no such cap, and
+ * nine sequential fetches measure at about 14 seconds against Devvit's 30
+ * second handler budget. See server/prices.ts for the spacing and the retry.
  */
-export const CHUNKS: readonly (readonly string[])[] = [
-  ORDER.slice(0, 3),
-  ORDER.slice(3, 6),
-  ORDER.slice(6),
-];
-
-/** Index of the pass that merges everything and publishes. */
-export const FINAL_PASS = CHUNKS.length - 1;

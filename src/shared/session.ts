@@ -99,6 +99,40 @@ export function sessionsFromEastern(
   return { session, points, prevClose };
 }
 
+/**
+ * Replace the sampled figures with the vendor's official ones.
+ *
+ * The bars are a five-minute sampling, so two numbers are approximations:
+ * the previous session's last bar stands in for the official close, and the
+ * final bar stands in for the closing auction print. Every percentage on the
+ * page is computed from both, so both errors land in it.
+ *
+ * Each substitution is independent and each is skipped when the vendor did
+ * not supply a usable figure, so a partial `meta` degrades to the old sampled
+ * behaviour rather than to nonsense.
+ *
+ * The last *point* is moved rather than appended: it is the same instant in
+ * the session, just measured properly, and appending would add a phantom
+ * step to the right-hand end of every plot.
+ */
+export function applyOfficial(
+  parsed: ParsedSession,
+  official: {
+    previousClose?: number | undefined;
+    lastPrice?: number | undefined;
+  }
+): ParsedSession {
+  const prevClose = official.previousClose ?? parsed.prevClose;
+
+  let points = parsed.points;
+  const last = points.at(-1);
+  if (official.lastPrice !== undefined && last) {
+    points = [...points.slice(0, -1), { ...last, c: official.lastPrice }];
+  }
+
+  return { ...parsed, points, prevClose };
+}
+
 /** Bars carrying a UTC millisecond timestamp (Polygon's shape). */
 export function parseSessions(results: Bar[] | undefined): ParsedSession | null {
   if (!Array.isArray(results)) return null;

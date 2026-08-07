@@ -28,10 +28,10 @@
  */
 
 import type { SeriesMap } from '../shared/charts';
-import { parseSessions } from '../shared/session';
+import { applyOfficial, parseSessions } from '../shared/session';
 import type { YahooChart } from '../shared/yahoo';
-import { toBars, vendorSymbol } from '../shared/yahoo';
-import { NAMES } from '../shared/watchlist';
+import { toBars, toOfficial, vendorSymbol } from '../shared/yahoo';
+import { NAMES, ORDER } from '../shared/watchlist';
 
 const ENDPOINT = 'https://query1.finance.yahoo.com/v8/finance/chart';
 
@@ -39,7 +39,19 @@ const ENDPOINT = 'https://query1.finance.yahoo.com/v8/finance/chart';
 const RANGE = '5d';
 const INTERVAL = '5m';
 
-/** One symbol's recent sessions. Throws on failure. */
+/** Gap between symbols. No published limit; this is politeness, not a rule. */
+const SPACING_MS = 1200;
+
+/** Pause before a single retry of an empty payload. */
+const RETRY_MS = 800;
+
+/**
+ * Stop retrying past this point so the handler cannot run out of time.
+ * Devvit allows 30 seconds; nine symbols at the spacing above take about 14.
+ */
+const RETRY_DEADLINE_MS = 22_000;
+
+/** One symbol's recent sessions, with official figures applied. Throws. */
 async function fetchSeries(symbol: string) {
   const url =
     `${ENDPOINT}/${encodeURIComponent(vendorSymbol(symbol))}` +
@@ -52,42 +64,76 @@ async function fetchSeries(symbol: string) {
   const err = body.chart?.error;
   if (err) throw new Error(err.description ?? 'chart error');
 
-  const parsed = parseSessions(toBars(body.chart?.result));
+  const result = body.chart?.result;
+  const parsed = parseSessions(toBars(result));
   if (!parsed) throw new Error('no complete session with a prior close');
-  return parsed;
+
+  // Swap the sampled endpoints for the vendor's official ones. Costs no extra
+  // request - the figures ride along in the same response.
+  return applyOfficial(parsed, toOfficial(result));
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /**
- * One chunk of symbols, fetched sequentially.
+ * The whole watchlist, fetched sequentially in one pass.
  *
- * Yahoo takes one symbol per request, so a chunk of three is three calls. They
- * are spaced a little apart: there is no published rate limit, but hammering
- * an unofficial endpoint is how you acquire one.
+ * This used to be split into three chunks across three scheduled passes,
+ * because Polygon's free tier allowed five calls a minute and nine symbols
+ * could not fit inside one. Yahoo has no such cap, and the split had costs of
+ * its own: it needed an accumulator in Redis, it left a three-minute window in
+ * which the grid was half-built, and a deploy landing mid-cycle merged symbols
+ * from two different watchlists into one incoherent post. Measured at nine
+ * sequential fetches in about 14 seconds against Devvit's 30 second budget,
+ * so one pass now does the lot and the accumulator is gone.
  *
- * Symbols that fail are reported in `failed` and left with empty points; the
- * renderer draws those as a "no data" panel, so one bad ticker degrades one
- * panel instead of killing the whole post.
+ * Symbols are still spaced apart. There is no published rate limit, but
+ * hammering an unofficial endpoint is how you acquire one.
+ *
+ * Retry: Yahoo intermittently answers HTTP 200 with a `meta` block and no bar
+ * arrays at all. Observed hitting every symbol in one burst and clearing
+ * moments later, so it is a transient rather than a throttle. Without a retry
+ * that transient blanks panels for a full five minutes, so each failure gets
+ * one more attempt - subject to a deadline, because a run of failures must
+ * never push the handler past its limit.
+ *
+ * Symbols that still fail are reported in `failed` and left with empty points;
+ * the renderer draws those as a "no data" panel, so one bad ticker degrades
+ * one panel instead of killing the whole post.
  */
-export async function fetchChunk(symbols: readonly string[]): Promise<{
-  series: SeriesMap;
-  failed: string[];
-}> {
+export async function fetchAll(
+  symbols: readonly string[] = ORDER
+): Promise<{ series: SeriesMap; failed: string[] }> {
   const series: SeriesMap = {};
   const failed: string[] = [];
+  const startedAt = Date.now();
 
   let first = true;
   for (const symbol of symbols) {
-    if (!first) await new Promise((r) => setTimeout(r, 1500));
+    if (!first) await sleep(SPACING_MS);
     first = false;
 
     const name = NAMES[symbol] ?? symbol;
     try {
       series[symbol] = { name, ...(await fetchSeries(symbol)) };
     } catch (error) {
-      failed.push(
-        `${symbol}: ${error instanceof Error ? error.message : String(error)}`
-      );
-      series[symbol] = { name, points: [], session: '', prevClose: 0 };
+      const first_ = error instanceof Error ? error.message : String(error);
+
+      if (Date.now() - startedAt > RETRY_DEADLINE_MS) {
+        failed.push(`${symbol}: ${first_} (no time to retry)`);
+        series[symbol] = { name, points: [], session: '', prevClose: 0 };
+        continue;
+      }
+
+      await sleep(RETRY_MS);
+      try {
+        series[symbol] = { name, ...(await fetchSeries(symbol)) };
+        console.log(`${symbol} recovered on retry after: ${first_}`);
+      } catch (retryError) {
+        const second = retryError instanceof Error ? retryError.message : String(retryError);
+        failed.push(`${symbol}: ${first_} / retry: ${second}`);
+        series[symbol] = { name, points: [], session: '', prevClose: 0 };
+      }
     }
   }
 

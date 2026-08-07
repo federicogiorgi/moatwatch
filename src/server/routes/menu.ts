@@ -15,9 +15,8 @@ export const menu = new Hono();
  * runs every five minutes and the evening passes catch a late session, so a
  * missing post appears on its own without anyone pressing anything.
  *
- * The handler cannot post synchronously - the watchlist takes several vendor
- * calls spaced minutes apart, far past the 30 second handler limit. It kicks
- * off pass 0, books the rest, and says when to look.
+ * The whole watchlist now fetches inside a single handler, so this posts
+ * during the request rather than booking a chain and asking you to come back.
  *
  * Note this clears `livePost` as well as `finalizedSession`, so running it
  * while the market is open orphans the session's live post: that post stops
@@ -25,11 +24,12 @@ export const menu = new Hono();
  */
 menu.post('/post-force', async (c) => {
   try {
-    await triggerManualRun(true);
+    const postId = await triggerManualRun(true);
     return c.json<UiResponse>(
       {
-        showToast:
-          'Re-posting the latest session. This creates a duplicate post in about 2 minutes.',
+        showToast: postId
+          ? 'Re-posted the latest session as a new duplicate post.'
+          : 'Nothing to post: no usable price data right now.',
       },
       200
     );

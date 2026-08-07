@@ -1,7 +1,7 @@
 ﻿// End-to-end against LIVE Yahoo data: fetch, parse sessions, render panels.
 // Uses the app's own vendorSymbol/toBars/parseSessions/renderCharts.
-import { vendorSymbol, toBars } from '../src/shared/yahoo.ts';
-import { parseSessions } from '../src/shared/session.ts';
+import { vendorSymbol, toBars, toOfficial } from '../src/shared/yahoo.ts';
+import { applyOfficial, parseSessions } from '../src/shared/session.ts';
 import { renderCharts, dayChangePct } from '../src/shared/charts.ts';
 import { ORDER, NAMES } from '../src/shared/watchlist.ts';
 
@@ -22,17 +22,31 @@ for (const symbol of ORDER) {
     const res = await fetch(url);
     const body = await res.json();
     if (body.chart?.error) throw new Error(body.chart.error.description);
-    const parsed = parseSessions(toBars(body.chart?.result));
-    if (!parsed) throw new Error('no complete session');
+    const sampled = parseSessions(toBars(body.chart?.result));
+    if (!sampled) throw new Error('no complete session');
+
+    // Mirror what server/prices.ts actually does. Testing the raw sampled
+    // parse would exercise a path the app no longer takes.
+    const parsed = applyOfficial(sampled, toOfficial(body.chart?.result));
     series[symbol] = { name: NAMES[symbol] ?? symbol, ...parsed };
     const pct = dayChangePct(series[symbol]);
+
+    // Show what the official figures moved, so the correction is visible
+    // rather than merely asserted.
+    const dPrev = parsed.prevClose - sampled.prevClose;
+    const dLast = parsed.points.at(-1).c - sampled.points.at(-1).c;
+    const drift =
+      dPrev || dLast
+        ? `  official: prev ${dPrev >= 0 ? '+' : ''}${dPrev.toFixed(2)}, last ${dLast >= 0 ? '+' : ''}${dLast.toFixed(2)}`
+        : '  official: same';
+
     console.log(
       `  ${symbol.padEnd(6)} -> ${vendorSymbol(symbol).padEnd(6)} ` +
       `session=${parsed.session} bars=${String(parsed.points.length).padStart(3)} ` +
       `${parsed.points[0].d}-${parsed.points.at(-1).d} ` +
       `prev=${parsed.prevClose.toFixed(2).padStart(9)} ` +
       `last=${parsed.points.at(-1).c.toFixed(2).padStart(9)} ` +
-      `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`
+      `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%${drift}`
     );
   } catch (e) {
     console.log(`  ${symbol.padEnd(6)} FAILED: ${e.message}`);

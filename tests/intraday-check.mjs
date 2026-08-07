@@ -4,7 +4,8 @@ import {
   renderCharts,
   dayChangePct,
 } from '../src/shared/charts.ts';
-import { parseSessions } from '../src/shared/session.ts';
+import { applyOfficial, parseSessions } from '../src/shared/session.ts';
+import { toOfficial } from '../src/shared/yahoo.ts';
 import { ORDER, NAMES } from '../src/shared/watchlist.ts';
 
 let fail = 0;
@@ -151,6 +152,63 @@ console.log('\n7. opening minutes: a single bar still draws');
   ok('two vertices drawn', verts.length, 2);
   const baseline = Number(p.index.svg.match(/<line x1="0" y1="([\d.]+)"/)[1]);
   ok('starts on previous-close line', Number(verts[0].split(',')[1]).toFixed(1), baseline.toFixed(1));
+}
+
+console.log('\n8. official close replaces the sampled endpoints');
+{
+  const bars = [
+    { t: et(2026, 6, 30, 9, 30, 4), c: 100.0 },
+    { t: et(2026, 6, 30, 15, 55, 4), c: 110.0 }, // sampled "previous close"
+    { t: et(2026, 6, 31, 9, 30, 4), c: 111.0 },
+    { t: et(2026, 6, 31, 15, 55, 4), c: 120.0 }, // sampled "last"
+  ];
+  const sampled = parseSessions(bars);
+  ok('sampled prevClose is the 15:55 bar', sampled.prevClose, 110);
+  ok('sampled last is the 15:55 bar', sampled.points.at(-1).c, 120);
+
+  // The official figures differ slightly, as they do in reality.
+  const official = applyOfficial(sampled, {
+    previousClose: 110.4,
+    lastPrice: 120.75,
+  });
+  ok('prevClose becomes official', official.prevClose, 110.4);
+  ok('last point becomes official', official.points.at(-1).c, 120.75);
+  ok('last point is moved, not appended', official.points.length, sampled.points.length);
+  // points[0] is this session's 09:30 bar; 100 belongs to the previous day.
+  ok('earlier points untouched', official.points[0].c, 111);
+  ok('pct uses both official ends', dayChangePct(official).toFixed(3), '9.375');
+
+  // A partial or absent meta must degrade to the sampled values, never to NaN.
+  const none = applyOfficial(sampled, {});
+  ok('no meta -> sampled prevClose', none.prevClose, 110);
+  ok('no meta -> sampled last', none.points.at(-1).c, 120);
+  const half = applyOfficial(sampled, { previousClose: 110.4 });
+  ok('partial meta -> official prev', half.prevClose, 110.4);
+  ok('partial meta -> sampled last', half.points.at(-1).c, 120);
+}
+
+console.log('\n9. toOfficial reads the right fields');
+{
+  // chartPreviousClose is the close before the whole 5d range - NOT yesterday.
+  // Picking it instead of previousClose is the trap this check exists to catch.
+  const o = toOfficial([
+    {
+      meta: {
+        previousClose: 312.41,
+        regularMarketPrice: 312.23,
+        chartPreviousClose: 308.91,
+      },
+    },
+  ]);
+  ok('previousClose, not chartPreviousClose', o.previousClose, 312.41);
+  ok('lastPrice is regularMarketPrice', o.lastPrice, 312.23);
+
+  const empty = toOfficial([{ meta: {} }]);
+  ok('absent meta fields -> undefined', empty.previousClose, undefined);
+  const zero = toOfficial([{ meta: { previousClose: 0, regularMarketPrice: -3 } }]);
+  ok('zero is rejected', zero.previousClose, undefined);
+  ok('negative is rejected', zero.lastPrice, undefined);
+  ok('no result at all -> undefined', toOfficial(undefined).previousClose, undefined);
 }
 
 console.log(fail === 0 ? '\nALL CHECKS PASSED' : `\n${fail} CHECK(S) FAILED`);

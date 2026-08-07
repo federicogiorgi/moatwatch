@@ -12,11 +12,55 @@ export type YahooChart = {
   chart?: {
     error?: { description?: string } | null;
     result?: {
+      meta?: {
+        previousClose?: number;
+        regularMarketPrice?: number;
+        chartPreviousClose?: number;
+      };
       timestamp?: number[];
       indicators?: { quote?: { close?: (number | null)[] }[] };
     }[];
   };
 };
+
+/**
+ * The official figures, when Yahoo supplies them.
+ *
+ * Both come from the same response we already fetch, so using them costs
+ * nothing extra.
+ */
+export type OfficialQuote = {
+  /** Previous session's official closing price. */
+  previousClose?: number | undefined;
+  /** Latest official regular-session price; the closing print once shut. */
+  lastPrice?: number | undefined;
+};
+
+const positive = (n: unknown): number | undefined =>
+  typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : undefined;
+
+/**
+ * Read the official close and last price out of `meta`.
+ *
+ * Why this exists: the five-minute bars are a sampling of the session, so the
+ * last bar is not the closing auction print and the previous session's last
+ * bar is not the official close. Both ends of every percentage were therefore
+ * slightly wrong - about 0.04 on a 312 dollar share, which is the ~0.1pp
+ * discrepancy against other finance sites disclosed in docs/TERMS.md.
+ *
+ * NOT `chartPreviousClose`. That is the close before the whole requested
+ * range begins - five days back, not yesterday - and it looks entirely
+ * plausible until you compare it with anything. `previousClose` is the one.
+ */
+export function toOfficial(
+  result: NonNullable<YahooChart['chart']>['result']
+): OfficialQuote {
+  const meta = result?.[0]?.meta;
+  return {
+    previousClose: positive(meta?.previousClose),
+    lastPrice: positive(meta?.regularMarketPrice),
+  };
+}
 
 /**
  * Our ticker to Yahoo's.
