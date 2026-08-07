@@ -87,6 +87,29 @@ export function isWithinIntradayWindow(now: Date = new Date()): boolean {
 }
 
 /**
+ * Does a comment count towards the day's board?
+ *
+ * Voting closes with the market, at 16:00 New York. This is asked of the
+ * comment's own timestamp rather than of the clock, because the pass that
+ * seals the post runs up to half an hour after the bell: without this, a
+ * comment posted at 16:12 could still change the panels on a session that had
+ * already stopped trading.
+ *
+ * A comment from a day before the session counts - it cannot exist on a post
+ * created that morning, but treating it as valid is the harmless direction.
+ */
+export function countsTowardBoard(
+  session: string,
+  createdAt: Date | number
+): boolean {
+  const when = typeof createdAt === 'number' ? new Date(createdAt) : createdAt;
+  const date = todayEastern(when);
+  if (date < session) return true;
+  if (date > session) return false;
+  return nowEastern(when) < MARKET_CLOSE_ET;
+}
+
+/**
  * Has this session finished trading?
  *
  * Asked of the data, not the clock. An earlier version asked "is it past 16:00

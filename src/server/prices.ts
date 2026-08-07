@@ -76,6 +76,48 @@ async function fetchSeries(symbol: string) {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * Does the vendor actually serve this symbol?
+ *
+ * Readers nominate tickers by typing them, so the board can contain anything
+ * that looks like a ticker. A symbol that does not exist must never reach a
+ * panel - it would render as an empty "no data" box, which is exactly the
+ * failure the whole feature is supposed to avoid.
+ *
+ * Deliberately strict: it is not enough for Yahoo to answer, it has to return
+ * a session we can actually plot. `$ZZZZ` returns a polite empty result, which
+ * would otherwise sail through an HTTP-status check.
+ */
+export async function isTradable(symbol: string): Promise<boolean> {
+  try {
+    await fetchSeries(symbol);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check several nominated symbols, spaced like any other vendor traffic.
+ *
+ * Capped: a brigade of nonsense tickers must not turn one pass into a hundred
+ * requests. Anything past the cap is simply not validated this pass, so it
+ * stays off the board until a later pass has room for it.
+ */
+export async function validateSymbols(
+  symbols: readonly string[],
+  cap = 6
+): Promise<Record<string, boolean>> {
+  const out: Record<string, boolean> = {};
+  let first = true;
+  for (const symbol of symbols.slice(0, cap)) {
+    if (!first) await sleep(SPACING_MS);
+    first = false;
+    out[symbol] = await isTradable(symbol);
+  }
+  return out;
+}
+
+/**
  * The whole watchlist, fetched sequentially in one pass.
  *
  * This used to be split into three chunks across three scheduled passes,

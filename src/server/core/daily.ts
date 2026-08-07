@@ -17,8 +17,16 @@ import { dayChangePct, renderCharts } from '../../shared/charts';
 import type { ChartsPayload, SeriesMap } from '../../shared/charts';
 import { isSessionComplete, todayEastern } from '../../shared/clock';
 import { decideAction } from '../../shared/lifecycle';
-import { ORDER } from '../../shared/watchlist';
-import { fetchAll } from '../prices';
+import {
+  DEFAULT_BOARD,
+  INDEX,
+  NAMES,
+  ORDER,
+  orderFor,
+} from '../../shared/watchlist';
+import { rankBoard, tallyVotes, unknownSymbols } from '../../shared/tickers';
+import { fetchAll, validateSymbols } from '../prices';
+import { votingComments } from '../comments';
 
 /** Redis key holding the rendered chart payload for a given post. */
 export const chartsKey = (postId: string) => `charts:${postId}`;
@@ -29,6 +37,117 @@ const LIVE_POST_KEY = 'livePost';
 /** The last session sealed. Nothing for this session is ever written again. */
 const FINALIZED_KEY = 'finalizedSession';
 
+/** Symbols we have already asked the vendor about: {"NVDA":true,...}. */
+const TRADABLE_KEY = 'tradableSymbols';
+
+/**
+ * Which symbols hold the panels right now.
+ *
+ * Recomputed every pass from the post's comments, so the board mutates through
+ * the day as people nominate. Nominated symbols are checked against the vendor
+ * before they can take a slot, and the answers are cached: a nominee is worth
+ * one probe, not one every five minutes.
+ *
+ * Returns the display order, index first.
+ */
+async function resolveOrder(
+  session: string,
+  postId: `t3_${string}` | null
+): Promise<string[]> {
+  // Before a post exists there is nothing to have commented on.
+  if (!postId) return [...ORDER];
+
+  let texts: string[];
+  try {
+    texts = await votingComments(postId, session);
+  } catch (error) {
+    // A board is not worth losing the post over. Fall back to the owner's.
+    console.warn(`Could not read comments, using default board: ${error}`);
+    return [...ORDER];
+  }
+
+  const votes = tallyVotes(texts, DEFAULT_BOARD);
+
+  const cachedRaw = await redis.get(TRADABLE_KEY);
+  const cached: Record<string, boolean> = cachedRaw ? JSON.parse(cachedRaw) : {};
+
+  // Anything nominated that we have never checked. Defaults are known good;
+  // the index is not contestable and must never be probed as a nominee.
+  const toCheck = unknownSymbols(votes, [
+    ...DEFAULT_BOARD,
+    INDEX.symbol,
+    ...Object.keys(cached),
+  ]);
+
+  if (toCheck.length > 0) {
+    const checked = await validateSymbols(toCheck);
+    Object.assign(cached, checked);
+    await redis.set(TRADABLE_KEY, JSON.stringify(cached));
+    const good = Object.entries(checked).filter(([, v]) => v).map(([k]) => k);
+    console.log(
+      `Checked ${toCheck.length} nominated symbol(s); tradable: ${good.join(', ') || 'none'}.`
+    );
+  }
+
+  const eligible = (sym: string) =>
+    sym !== INDEX.symbol &&
+    (DEFAULT_BOARD.includes(sym) || cached[sym] === true);
+
+  const board = rankBoard(votes, eligible);
+  if (board.length === 0) return [...ORDER];
+
+  const promoted = board.filter((s) => !DEFAULT_BOARD.includes(s));
+  if (promoted.length > 0) {
+    console.log(`Board changed by comments: ${promoted.join(', ')} in.`);
+  }
+
+  return orderFor(board);
+}
+
+/**
+ * The stickied comment: posted once, when the post is created, and never
+ * touched again.
+ *
+ * It is deliberately static. Its job is to tell readers how to nominate a
+ * ticker, which is useless if it only appears once trading has finished, and
+ * misleading if it carries prices that stop updating. So it lists the owner's
+ * own board - the lineup the day starts from - and the rules, and nothing that
+ * goes stale.
+ */
+function stickyText(): string {
+  const rows = [
+    '| Name | Symbol |',
+    '|:--|:--|',
+    `| ${INDEX.name} | \`${INDEX.symbol}\` |`,
+    ...DEFAULT_BOARD.map((s) => `| ${NAMES[s] ?? s} | \`${s}\` |`),
+  ];
+
+  return [
+    "**Today's starting line-up**",
+    '',
+    ...rows,
+    '',
+    '---',
+    '',
+    '**You choose the other eight.**',
+    '',
+    `${INDEX.name} always keeps the big panel. The eight smaller ones are yours:`,
+    'mention a ticker in the comments and it competes for a slot.',
+    '',
+    '- Write the ticker with a dollar sign and in capitals: **`$GOOGL`**, **`$NVDA`**, **`$BRK.B`**.',
+    '- `GOOGL`, `googl`, `$googl` and `Google` do **not** count. The `$` and the capitals are both required.',
+    '- Every mention is one vote. The eight best-supported tickers hold the panels.',
+    "- The line-up above starts with half a vote each, so one mention is enough to unseat an untouched panel. The one latest in the alphabet goes first.",
+    '- A ticker the data provider does not recognise is ignored, rather than shown as an empty panel.',
+    '',
+    '**Voting closes at 16:00 New York time**, when the market shuts and the post is sealed.',
+    'The next trading day the board resets to the line-up above and the race starts again from zero.',
+    '',
+    'Data from Yahoo Finance.',
+    'Nothing here is investment advice.',
+  ].join('\n');
+}
+
 export type DailyBuild = {
   charts: ChartsPayload;
   title: string;
@@ -37,9 +156,9 @@ export type DailyBuild = {
 };
 
 /** The session every panel agrees on - the most recent one present. */
-function latestSession(series: SeriesMap): string {
+function latestSession(series: SeriesMap, order: readonly string[]): string {
   let latest = '';
-  for (const sym of ORDER) {
+  for (const sym of order) {
     const s = series[sym]?.session;
     if (s && s > latest) latest = s;
   }
@@ -47,21 +166,25 @@ function latestSession(series: SeriesMap): string {
 }
 
 /** Points for whichever symbol actually carries the session we are showing. */
-function samplepoints(series: SeriesMap, session: string) {
+function samplepoints(
+  series: SeriesMap,
+  order: readonly string[],
+  session: string
+) {
   return (
-    ORDER.map((s) => series[s]).find(
+    order.map((s) => series[s]).find(
       (s) => s && s.session === session && s.points.length > 0
     )?.points ?? []
   );
 }
 
-function priceTable(series: SeriesMap): string {
+function priceTable(series: SeriesMap, order: readonly string[]): string {
   const rows = [
     '| Name | Symbol | Close | Change on the day |',
     '|:--|:--|--:|--:|',
   ];
 
-  for (const sym of ORDER) {
+  for (const sym of order) {
     const entry = series[sym];
     const name = entry?.name ?? sym;
     const last = entry?.points.at(-1)?.c;
@@ -80,8 +203,12 @@ function priceTable(series: SeriesMap): string {
 }
 
 /** Compose everything for a session. `live` drives the subtitle. */
-export function composeDaily(series: SeriesMap, live: boolean): DailyBuild {
-  const session = latestSession(series);
+export function composeDaily(
+  series: SeriesMap,
+  live: boolean,
+  order: readonly string[] = ORDER
+): DailyBuild {
+  const session = latestSession(series, order);
   if (!session) throw new Error('No usable price data for any symbol');
 
   // `session` is already a New York calendar date, decided by session.ts. It
@@ -100,7 +227,7 @@ export function composeDaily(series: SeriesMap, live: boolean): DailyBuild {
   });
   const sessionLabel = fmt({ day: 'numeric', month: 'long', year: 'numeric' });
 
-  const charts = renderCharts(series, ORDER, { dateLabel, sessionLabel, live });
+  const charts = renderCharts(series, order, { dateLabel, sessionLabel, live });
 
   const title = `Daily Charts, ${fmt({
     day: '2-digit',
@@ -111,7 +238,7 @@ export function composeDaily(series: SeriesMap, live: boolean): DailyBuild {
   const body = [
     `**Closing numbers for ${dateLabel}**`,
     '',
-    priceTable(series),
+    priceTable(series, order),
     '',
     '---',
     '',
@@ -140,12 +267,15 @@ async function readLivePost(): Promise<LivePost | null> {
  *
  * Returns the post id when one was created, so callers can log it.
  */
-async function reconcile(series: SeriesMap): Promise<string | null> {
+async function reconcile(
+  series: SeriesMap,
+  order: readonly string[]
+): Promise<string | null> {
   const { subredditName } = context;
   if (!subredditName) throw new Error('subredditName missing from context');
 
-  const session = latestSession(series);
-  const points = samplepoints(series, session);
+  const session = latestSession(series, order);
+  const points = samplepoints(series, order, session);
 
   const action = decideAction({
     session,
@@ -161,7 +291,7 @@ async function reconcile(series: SeriesMap): Promise<string | null> {
   }
 
   const live = action.kind === 'create-live' || action.kind === 'update-live';
-  const build = composeDaily(series, live);
+  const build = composeDaily(series, live, order);
 
   if (action.kind === 'update-live') {
     const livePost = await readLivePost();
@@ -175,14 +305,9 @@ async function reconcile(series: SeriesMap): Promise<string | null> {
     await redis.set(chartsKey(livePost!.postId), JSON.stringify(build.charts));
     await redis.set(FINALIZED_KEY, session);
 
-    // The summary comment is added once, at the close, because that is the
-    // first moment the numbers in it are final.
-    const comment = await reddit.submitComment({
-      id: livePost!.postId,
-      text: build.body,
-    });
-    await comment.distinguish(true); // true = also sticky it
-
+    // No comment here. The stickied comment went up when the post was created
+    // - readers need the nomination rules while they can still act on them,
+    // not after the close - and it is deliberately never edited.
     console.log(`Sealed ${livePost!.postId} at close of ${session}.`);
     return null;
   }
@@ -201,13 +326,15 @@ async function reconcile(series: SeriesMap): Promise<string | null> {
     JSON.stringify({ session, postId: post.id } satisfies LivePost)
   );
 
+  // The rules, posted once, at the only moment they are still actionable.
+  const comment = await reddit.submitComment({
+    id: post.id,
+    text: stickyText(),
+  });
+  await comment.distinguish(true); // true = also sticky it
+
   if (action.kind === 'create-final') {
     await redis.set(FINALIZED_KEY, session);
-    const comment = await reddit.submitComment({
-      id: post.id,
-      text: build.body,
-    });
-    await comment.distinguish(true);
     console.log(`Posted ${post.id} for closed session ${session}.`);
   } else {
     console.log(`Opened ${post.id} for live session ${session}.`);
@@ -230,13 +357,23 @@ async function reconcile(series: SeriesMap): Promise<string | null> {
  * only. Scheduled runs never set it.
  */
 export async function runPass(force = false): Promise<string | null> {
-  const { series, failed } = await fetchAll(ORDER);
+  // The board is decided before anything is fetched, because it decides what
+  // to fetch. It can only have moved if there is a post to have commented on:
+  // the first pass of the day always runs the owner's line-up, which is also
+  // the honest answer, since nobody has voted yet.
+  const livePost = await readLivePost();
+  const order =
+    livePost && livePost.session === todayEastern()
+      ? await resolveOrder(livePost.session, livePost.postId)
+      : [...ORDER];
+
+  const { series, failed } = await fetchAll(order);
   if (failed.length > 0) {
     console.warn(`Fetch problems: ${failed.join('; ')}`);
   }
 
-  const held = ORDER.filter((s) => (series[s]?.points.length ?? 0) > 0).length;
-  console.log(`Fetched ${held}/${ORDER.length} symbols.`);
+  const held = order.filter((s) => (series[s]?.points.length ?? 0) > 0).length;
+  console.log(`Fetched ${held}/${order.length} symbols: ${order.join(' ')}`);
 
   if (force) {
     // Deliberately bypasses the whole lifecycle: publish a fresh closed post
@@ -246,7 +383,7 @@ export async function runPass(force = false): Promise<string | null> {
     await redis.del(LIVE_POST_KEY);
   }
 
-  return reconcile(series);
+  return reconcile(series, order);
 }
 
 /**

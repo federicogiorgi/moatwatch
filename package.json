@@ -10,7 +10,7 @@
     "dev": "devvit playtest r/TheMoat",
     "launch": "npm run deploy && devvit publish",
     "lint": "eslint src",
-    "check": "node tests/timezone-check.mjs && node tests/lifecycle-check.mjs && node tests/subtitle-check.mjs && node tests/intraday-check.mjs dist-test.svg",
+    "check": "node tests/timezone-check.mjs && node tests/lifecycle-check.mjs && node tests/subtitle-check.mjs && node tests/tickers-check.mjs && node tests/intraday-check.mjs dist-test.svg",
     "check:live": "node tests/yahoo-e2e.mjs",
     "login": "devvit login",
     "prettier": "prettier --write .",

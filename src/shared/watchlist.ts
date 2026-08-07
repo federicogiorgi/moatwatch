@@ -33,12 +33,39 @@ export const STOCKS: readonly Instrument[] = [
   { symbol: 'SYM', name: 'Symbotic' },
 ];
 
-/** Index first, then the eight small panels in display order. */
-export const ORDER: readonly string[] = [
-  INDEX.symbol,
-  ...STOCKS.map((s) => s.symbol),
-];
+/**
+ * The owner's eight: where every day starts, before anyone has voted.
+ *
+ * These are not fixed any more. Readers nominate tickers by writing them with
+ * a dollar sign, and the eight best-supported symbols hold the panels - see
+ * shared/tickers.ts. Each of these opens the day with half a vote, so an
+ * untouched default outranks anything nobody mentioned but loses its slot to
+ * a single genuine nomination. The next morning the board resets to this list.
+ *
+ * The index is not contestable and is not part of this.
+ */
+export const DEFAULT_BOARD: readonly string[] = STOCKS.map((s) => s.symbol);
 
+/** Index first, then the eight small panels in display order. */
+export const ORDER: readonly string[] = [INDEX.symbol, ...DEFAULT_BOARD];
+
+/**
+ * Display order for a board that may contain symbols we have never seen.
+ *
+ * The index always leads and is never voted on; the contested panels follow
+ * alphabetically, so the grid reads the same way however the voting went.
+ */
+export function orderFor(board: readonly string[]): string[] {
+  return [INDEX.symbol, ...[...board].sort()];
+}
+
+/**
+ * Display names for the symbols we ship with.
+ *
+ * A nominated ticker has no name of ours. Every call site already falls back
+ * to the symbol itself (`NAMES[s] ?? s`), which is what a reader who typed
+ * `$NVDA` will recognise anyway.
+ */
 export const NAMES: Readonly<Record<string, string>> = Object.fromEntries(
   [INDEX, ...STOCKS].map((s) => [s.symbol, s.name])
 );
