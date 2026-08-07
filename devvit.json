@@ -74,13 +74,6 @@
   "menu": {
     "items": [
       {
-        "label": "Post today's charts",
-        "description": "Build and post the MoatWatch chart grid now",
-        "location": "subreddit",
-        "forUserType": "moderator",
-        "endpoint": "/internal/menu/post-create"
-      },
-      {
         "label": "Re-post latest session (force)",
         "description": "Republish the latest session even if already posted - creates a duplicate",
         "location": "subreddit",
@@ -88,9 +81,6 @@
         "endpoint": "/internal/menu/post-force"
       }
     ]
-  },
-  "forms": {
-    "exampleForm": "/internal/form/example-submit"
   },
   "dev": {
     "subreddit": "TheMoat"

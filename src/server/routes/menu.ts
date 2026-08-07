@@ -5,40 +5,23 @@ import { triggerManualRun } from '../core/daily';
 export const menu = new Hono();
 
 /**
- * Neither handler can post synchronously: the watchlist takes two vendor calls
- * spaced a couple of minutes apart, far past the 30 second handler limit. Both
- * kick off pass A, book pass B, and say when to look.
- */
-
-/** "Post today's charts" - normal trigger, obeys the duplicate guard. */
-menu.post('/post-create', async (c) => {
-  try {
-    await triggerManualRun(false);
-    return c.json<UiResponse>(
-      {
-        showToast:
-          'Fetching prices. If there is a session we have not posted yet, it will appear in a couple of minutes.',
-      },
-      200
-    );
-  } catch (error) {
-    console.error(`Manual trigger failed: ${error}`);
-    return c.json<UiResponse>(
-      {
-        showToast: `Failed: ${error instanceof Error ? error.message : error}`,
-      },
-      400
-    );
-  }
-});
-
-/**
  * "Re-post latest session (force)" - republishes even if already posted.
  *
- * Deliberately a separate item rather than a flag on the one above, so the
- * everyday action stays incapable of creating duplicates. This one is for
- * checking a rendering change without waiting for the next trading session,
- * which over a weekend can be three days away.
+ * This is for checking a rendering change without waiting for the next trading
+ * session, which over a weekend can be three days away.
+ *
+ * There used to be a second, safe item here ("Post today's charts") that
+ * obeyed the duplicate guard. It was removed as redundant: the intraday cron
+ * runs every five minutes and the evening passes catch a late session, so a
+ * missing post appears on its own without anyone pressing anything.
+ *
+ * The handler cannot post synchronously - the watchlist takes several vendor
+ * calls spaced minutes apart, far past the 30 second handler limit. It kicks
+ * off pass 0, books the rest, and says when to look.
+ *
+ * Note this clears `livePost` as well as `finalizedSession`, so running it
+ * while the market is open orphans the session's live post: that post stops
+ * refreshing and a duplicate starts alongside it. Use it out of hours.
  */
 menu.post('/post-force', async (c) => {
   try {
