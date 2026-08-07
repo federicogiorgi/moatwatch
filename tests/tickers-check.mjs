@@ -7,7 +7,11 @@ import {
   unknownSymbols,
   BASELINE_VOTE,
 } from '../src/shared/tickers.ts';
-import { countsTowardBoard } from '../src/shared/clock.ts';
+import {
+  countsTowardBoard,
+  closeTimesElsewhere,
+  easternInstant,
+} from '../src/shared/clock.ts';
 
 let fail = 0;
 const ok = (label, got, want) => {
@@ -159,6 +163,46 @@ console.log('\n9. voting closes at 16:00 New York, by the comment clock');
   const W = '2026-01-20';
   ok('winter 15:59 counts', countsTowardBoard(W, et(2026, 0, 20, 15, 59, 5)), true);
   ok('winter 16:01 does not', countsTowardBoard(W, et(2026, 0, 20, 16, 1, 5)), false);
+}
+
+console.log('\n10. the close, resolved to a real instant');
+{
+  // Summer: New York is UTC-4, so 16:00 there is 20:00 UTC.
+  ok('summer close in UTC', easternInstant('2026-08-07', '16:00').toISOString(), '2026-08-07T20:00:00.000Z');
+  // Winter: New York is UTC-5, so the same wall clock is 21:00 UTC. Writing
+  // either offset into logic would be wrong for half the year.
+  ok('winter close in UTC', easternInstant('2026-01-20', '16:00').toISOString(), '2026-01-20T21:00:00.000Z');
+  ok('open resolves too', easternInstant('2026-08-07', '09:30').toISOString(), '2026-08-07T13:30:00.000Z');
+}
+
+console.log('\n11. the deadline quoted elsewhere');
+{
+  const at = (session, city) =>
+    closeTimesElsewhere(session).find((t) => t.city === city);
+
+  const s = '2026-08-07'; // summer
+  ok('LA is three hours behind', at(s, 'Los Angeles').time, '13:00');
+  ok('London', at(s, 'London').time, '21:00');
+  ok('Rome', at(s, 'Rome').time, '22:00');
+  ok('Mumbai', at(s, 'Mumbai').time, '01:30');
+  ok('Mumbai rolls over', at(s, 'Mumbai').nextDay, true);
+  ok('Tokyo', at(s, 'Tokyo').time, '05:00');
+  ok('Tokyo rolls over', at(s, 'Tokyo').nextDay, true);
+  ok('London does not roll over', at(s, 'London').nextDay, false);
+
+  const w = '2026-01-20'; // winter
+  ok('winter London', at(w, 'London').time, '21:00');
+  ok('winter Rome', at(w, 'Rome').time, '22:00');
+  ok('winter Sydney', at(w, 'Sydney').time, '08:00');
+
+  // The reason this is computed and not written down: for two weeks each
+  // spring New York has moved to summer time and London has not, so the gap
+  // is four hours instead of the usual five and every hardcoded table is
+  // wrong. 8 March 2026 is inside that window.
+  ok('spring gap: London', at('2026-03-09', 'London').time, '20:00');
+  ok('spring gap: Rome', at('2026-03-09', 'Rome').time, '21:00');
+  // ...and once Europe catches up, the usual gap returns.
+  ok('after Europe shifts: London', at('2026-04-13', 'London').time, '21:00');
 }
 
 console.log(fail === 0 ? '\nALL CHECKS PASSED' : `\n${fail} CHECK(S) FAILED`);

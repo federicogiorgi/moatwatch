@@ -87,6 +87,81 @@ export function isWithinIntradayWindow(now: Date = new Date()): boolean {
 }
 
 /**
+ * The exact instant of a wall-clock time in New York on a given date.
+ *
+ * A date and a time are not an instant until a zone is applied, and the zone's
+ * offset is itself a function of the instant - which is circular. Resolved by
+ * guessing, asking the tz database what wall clock that guess actually lands
+ * on, and correcting by the difference. Twice, because a guess can land on the
+ * far side of a daylight-saving transition and need correcting again.
+ */
+export function easternInstant(session: string, hhmm: string): Date {
+  const [y, mo, d] = session.split('-').map(Number);
+  const [hh, mi] = hhmm.split(':').map(Number);
+  const wanted = Date.UTC(y!, mo! - 1, d!, hh!, mi!);
+
+  let ms = wanted;
+  for (let i = 0; i < 2; i++) {
+    const p = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York',
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).formatToParts(new Date(ms));
+    const g = (t: string) => Number(p.find((x) => x.type === t)?.value ?? 0);
+    const landed = Date.UTC(g('year'), g('month') - 1, g('day'), g('hour'), g('minute'));
+    if (landed === wanted) break;
+    ms += wanted - landed;
+  }
+  return new Date(ms);
+}
+
+/** A city to quote the deadline in, and its tz database zone. */
+const ELSEWHERE: readonly { city: string; zone: string }[] = [
+  { city: 'Los Angeles', zone: 'America/Los_Angeles' },
+  { city: 'London', zone: 'Europe/London' },
+  { city: 'Rome', zone: 'Europe/Rome' },
+  { city: 'Mumbai', zone: 'Asia/Kolkata' },
+  { city: 'Tokyo', zone: 'Asia/Tokyo' },
+  { city: 'Sydney', zone: 'Australia/Sydney' },
+];
+
+/**
+ * The close, quoted in a few other places readers might be in.
+ *
+ * Computed from the tz database for the session in question rather than
+ * written down, because none of these offsets are constant and they do not all
+ * move together - London and New York change on different weekends, so for two
+ * weeks each spring the usual five hour gap is four. A hardcoded table would
+ * be wrong twice a year, quietly, in the one line telling people their
+ * deadline.
+ */
+export function closeTimesElsewhere(
+  session: string
+): { city: string; time: string; nextDay: boolean }[] {
+  const at = easternInstant(session, MARKET_CLOSE_ET);
+
+  return ELSEWHERE.map(({ city, zone }) => {
+    const time = new Intl.DateTimeFormat('en-GB', {
+      timeZone: zone,
+      hourCycle: 'h23',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(at);
+    const date = new Intl.DateTimeFormat('en-CA', {
+      timeZone: zone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(at);
+    return { city, time, nextDay: date > session };
+  });
+}
+
+/**
  * Does a comment count towards the day's board?
  *
  * Voting closes with the market, at 16:00 New York. This is asked of the

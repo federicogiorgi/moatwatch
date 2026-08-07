@@ -15,12 +15,16 @@
 import { context, redis, reddit } from '@devvit/web/server';
 import { dayChangePct, renderCharts } from '../../shared/charts';
 import type { ChartsPayload, SeriesMap } from '../../shared/charts';
-import { isSessionComplete, todayEastern } from '../../shared/clock';
+import {
+  MARKET_CLOSE_ET,
+  closeTimesElsewhere,
+  isSessionComplete,
+  todayEastern,
+} from '../../shared/clock';
 import { decideAction } from '../../shared/lifecycle';
 import {
   DEFAULT_BOARD,
   INDEX,
-  NAMES,
   ORDER,
   orderFor,
 } from '../../shared/watchlist';
@@ -114,37 +118,27 @@ async function resolveOrder(
  * own board - the lineup the day starts from - and the rules, and nothing that
  * goes stale.
  */
-function stickyText(): string {
-  const rows = [
-    '| Name | Symbol |',
-    '|:--|:--|',
-    `| ${INDEX.name} | \`${INDEX.symbol}\` |`,
-    ...DEFAULT_BOARD.map((s) => `| ${NAMES[s] ?? s} | \`${s}\` |`),
-  ];
+function stickyText(session: string): string {
+  const elsewhere = closeTimesElsewhere(session)
+    .map((t) => `${t.city} ${t.time}${t.nextDay ? ' (next day)' : ''}`)
+    .join(' · ');
 
   return [
-    "**Today's starting line-up**",
+    '**Want a different chart up here? Ask for it.**',
     '',
-    ...rows,
+    `Write the ticker with a dollar sign, in capitals: **\`$GOOGL\`**, **\`$NVDA\`**, **\`$BRK.B\`**.`,
+    'Every mention is a vote, and the eight best-supported tickers take the eight small panels.',
+    `${INDEX.name} always keeps the big one.`,
     '',
-    '---',
+    '`GOOGL`, `googl`, `$googl` and `Google` do not count - the `$` and the capitals are both required.',
+    'A ticker the data provider does not recognise is ignored.',
     '',
-    '**You choose the other eight.**',
+    `**Comments are counted until ${MARKET_CLOSE_ET} New York time**, when the market closes and this post is sealed.`,
+    `That is ${elsewhere}.`,
     '',
-    `${INDEX.name} always keeps the big panel. The eight smaller ones are yours:`,
-    'mention a ticker in the comments and it competes for a slot.',
+    'Tomorrow the board resets and the race starts again from zero.',
     '',
-    '- Write the ticker with a dollar sign and in capitals: **`$GOOGL`**, **`$NVDA`**, **`$BRK.B`**.',
-    '- `GOOGL`, `googl`, `$googl` and `Google` do **not** count. The `$` and the capitals are both required.',
-    '- Every mention is one vote. The eight best-supported tickers hold the panels.',
-    "- The line-up above starts with half a vote each, so one mention is enough to unseat an untouched panel. The one latest in the alphabet goes first.",
-    '- A ticker the data provider does not recognise is ignored, rather than shown as an empty panel.',
-    '',
-    '**Voting closes at 16:00 New York time**, when the market shuts and the post is sealed.',
-    'The next trading day the board resets to the line-up above and the race starts again from zero.',
-    '',
-    'Data from Yahoo Finance.',
-    'Nothing here is investment advice.',
+    'Data from Yahoo Finance. Nothing here is investment advice.',
   ].join('\n');
 }
 
@@ -329,7 +323,7 @@ async function reconcile(
   // The rules, posted once, at the only moment they are still actionable.
   const comment = await reddit.submitComment({
     id: post.id,
-    text: stickyText(),
+    text: stickyText(session),
   });
   await comment.distinguish(true); // true = also sticky it
 
