@@ -63,6 +63,12 @@ console.log('\n3. HOLIDAY: Tue after MLK Monday compares to Friday (EST)');
 }
 
 // Build a full payload for the remaining checks.
+//
+// The gapped symbol is read from the watchlist rather than named, for the
+// same reason the index is in check 4: editing the watchlist must not fail an
+// unrelated assertion. Naming a ticker here once meant that removing it broke
+// the whole suite with a TypeError.
+const GAPPED = ORDER[1];
 const series = {};
 ORDER.forEach((s, i) => {
   const pts = [];
@@ -73,12 +79,12 @@ ORDER.forEach((s, i) => {
     v *= 1 + Math.sin(m * (i + 1) * 0.21) * 0.002;
     pts.push({ d: `${hh}:${mm}`, c: Math.round(v * 100) / 100 });
   }
-  // Give Apple an overnight gap, as on 31 Jul.
+  // Give one symbol an overnight gap, as Apple had on 31 Jul.
   series[s] = {
     name: NAMES[s] ?? s,
     points: pts,
     session: '2026-07-31',
-    prevClose: (100 + i * 5) * (s === 'AAPL' ? 1.09 : 1.0),
+    prevClose: (100 + i * 5) * (s === GAPPED ? 1.09 : 1.0),
   };
 });
 const payload = renderCharts(series, ORDER, { dateLabel: 'Friday, 31 July 2026' });
@@ -90,7 +96,7 @@ console.log('\n4. payload shape');
   ok('index panel present', payload.index.ticker, ORDER[0]);
   ok('eight small panels', payload.panels.length, 8);
   ok('all panels have data', payload.panels.every((p) => p.hasData), true);
-  ok('name is data, not baked into svg', payload.panels[0].name, 'Alphabet');
+  ok('name is data, not baked into svg', payload.panels[0].name, NAMES[ORDER[1]]);
   ok('percent is a label', /^[+-]\d+\.\d{2}%$/.test(payload.panels[0].pctLabel), true);
 }
 
@@ -112,14 +118,39 @@ console.log('\n5. plots are built to stretch (the responsive part)');
 
 console.log('\n6. gap fix: line starts at the previous close');
 {
-  const apple = payload.panels.find((p) => p.ticker === 'AAPL');
-  const baseline = Number(apple.svg.match(/<line x1="0" y1="([\d.]+)"/)[1]);
-  const first = Number(apple.svg.match(/<polyline points="[\d.]+,([\d.]+)/)[1]);
+  const gapped = payload.panels.find((p) => p.ticker === GAPPED);
+  ok('gapped panel exists', Boolean(gapped), true);
+  const baseline = Number(gapped.svg.match(/<line x1="0" y1="([\d.]+)"/)[1]);
+  const first = Number(gapped.svg.match(/<polyline points="[\d.]+,([\d.]+)/)[1]);
   const second = Number(
-    apple.svg.match(/<polyline points="[\d.]+,[\d.]+ [\d.]+,([\d.]+)/)[1]
+    gapped.svg.match(/<polyline points="[\d.]+,[\d.]+ [\d.]+,([\d.]+)/)[1]
   );
   ok('starts on previous-close line', first.toFixed(1), baseline.toFixed(1));
   ok('drops away from it', second > baseline + 100, true);
+}
+
+console.log('\n7. opening minutes: a single bar still draws');
+{
+  // 09:30, one five-minute bar. This used to be rejected by matching guards in
+  // session.ts and charts.ts, blanking the first chunk every morning.
+  const one = parseSessions([
+    { t: et(2026, 6, 30, 9, 30, 4), c: 100.0 },
+    { t: et(2026, 6, 30, 15, 55, 4), c: 110.0 }, // previous close
+    { t: et(2026, 6, 31, 9, 30, 4), c: 104.5 },  // the only bar so far today
+  ]);
+  ok('single-bar session parses', Boolean(one), true);
+  ok('session is the new day', one.session, '2026-07-31');
+  ok('one point held', one.points.length, 1);
+  ok('prevClose is yesterday', one.prevClose, 110);
+
+  const p = renderCharts({ [ORDER[0]]: { name: 'X', ...one } }, ORDER);
+  ok('panel reports data', p.index.hasData, true);
+  ok('percent is a label', /^[+-]\d+\.\d{2}%$/.test(p.index.pctLabel), true);
+  // prevClose -> the single point: exactly two vertices.
+  const verts = p.index.svg.match(/<polyline points="([^"]+)"/)[1].split(' ');
+  ok('two vertices drawn', verts.length, 2);
+  const baseline = Number(p.index.svg.match(/<line x1="0" y1="([\d.]+)"/)[1]);
+  ok('starts on previous-close line', Number(verts[0].split(',')[1]).toFixed(1), baseline.toFixed(1));
 }
 
 console.log(fail === 0 ? '\nALL CHECKS PASSED' : `\n${fail} CHECK(S) FAILED`);

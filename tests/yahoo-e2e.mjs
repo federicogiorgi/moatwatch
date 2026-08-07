@@ -41,15 +41,24 @@ for (const symbol of ORDER) {
   await new Promise((r) => setTimeout(r, 300));
 }
 
+// Every check below tolerates a missing symbol. A failed fetch must show up as
+// one FAIL and let the rest of the suite run: this script is the thing you
+// reach for WHEN something is broken, so crashing on the first absent symbol
+// hides exactly the report you came for. It used to do that - `series[s].points`
+// threw a TypeError and killed the run before the render checks ever ran.
 console.log('\nchecks:');
+const present = ORDER.filter((s) => series[s]);
+
 ok('every symbol returned data', Object.keys(series).length === ORDER.length);
-ok('all panels have points', ORDER.every((s) => (series[s]?.points.length ?? 0) > 2));
-ok('all agree on one session', new Set(ORDER.map((s) => series[s]?.session)).size === 1);
-ok('bars are inside regular hours', ORDER.every((s) => {
+// One bar is legitimate in the opening minutes - session.ts and charts.ts both
+// draw it. Asserting more than two here reported a failure every morning.
+ok('all panels have points', present.length > 0 && present.every((s) => series[s].points.length >= 1));
+ok('all agree on one session', new Set(present.map((s) => series[s].session)).size === 1);
+ok('bars are inside regular hours', present.length > 0 && present.every((s) => {
   const p = series[s].points;
-  return p[0].d >= '09:30' && p.at(-1).d < '16:00';
+  return p.length > 0 && p[0].d >= '09:30' && p.at(-1).d < '16:00';
 }));
-ok('every prevClose is positive', ORDER.every((s) => series[s].prevClose > 0));
+ok('every prevClose is positive', present.length > 0 && present.every((s) => series[s].prevClose > 0));
 
 const payload = renderCharts(series, ORDER, {
   sessionLabel: 'test',
@@ -59,7 +68,7 @@ ok('index panel rendered', payload.index.hasData);
 ok('eight small panels rendered', payload.panels.length === 8 && payload.panels.every((p) => p.hasData));
 ok('plots are stretchable', payload.index.svg.includes('preserveAspectRatio="none"'));
 
-console.log(`\nsession: ${series[ORDER[0]].session}`);
+console.log(`\nsession: ${series[ORDER[0]]?.session ?? 'none'}`);
 console.log(fail === 0 ? 'ALL CHECKS PASSED' : `${fail} FAILED`);
 process.exit(fail === 0 ? 0 : 1);
 

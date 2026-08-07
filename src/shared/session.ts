@@ -89,7 +89,13 @@ export function sessionsFromEastern(
   const points = (byDate.get(session) ?? []).sort(byTime);
   const prevClose = (byDate.get(prevDate) ?? []).sort(byTime).at(-1)?.c;
 
-  if (!prevClose || points.length < 2) return null;
+  // One bar is enough to draw. The renderer prepends the previous close
+  // before plotting, so a single point still yields a two-vertex line.
+  // Requiring two bars here meant that at 09:30, when exactly one five-minute
+  // bar exists, every symbol in the first chunk was rejected and rendered as
+  // an empty "no data" panel for the opening minutes - including the S&P 500.
+  // charts.ts carries the matching guard; the two have to agree.
+  if (!prevClose || points.length < 1) return null;
   return { session, points, prevClose };
 }
 

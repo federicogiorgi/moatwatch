@@ -165,7 +165,10 @@ function plotSvg(
 function renderPanel(ticker: string, series: Partial<Series>): PanelRender {
   const { points, name, prevClose } = series;
 
-  if (!points || points.length < 2 || !prevClose) {
+  // A single point is drawable: plotSvg prepends the previous close, giving
+  // two vertices. This mirrors the relaxed guard in session.ts - both had to
+  // move together, because either one alone still blanks the panel.
+  if (!points || points.length < 1 || !prevClose) {
     return {
       ticker,
       name: name ?? ticker,
