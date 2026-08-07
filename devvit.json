@@ -1,0 +1,102 @@
+{
+  "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
+  "name": "moatwatch",
+  "post": {
+    "dir": "dist/client",
+    "entrypoints": {
+      "default": {
+        "inline": true,
+        "entry": "splash.html"
+      },
+      "game": {
+        "entry": "game.html"
+      }
+    }
+  },
+  "server": {
+    "dir": "dist/server",
+    "entry": "index.cjs"
+  },
+  "permissions": {
+    "http": {
+      "enable": true,
+      "domains": [
+        "query1.finance.yahoo.com",
+        "api.twelvedata.com",
+        "api.tiingo.com",
+        "alphavantage.co",
+        "financialmodelingprep.com"
+      ]
+    },
+    "redis": true,
+    "reddit": {
+      "enable": true,
+      "scope": "moderator"
+    }
+  },
+  "scheduler": {
+    "tasks": {
+      "intraday-pass-0": {
+        "endpoint": "/internal/scheduler/daily-charts-pass",
+        "cron": "0,5,10,15,20,25,30,35,40,45,50,55 13-21 * * 1-5",
+        "data": { "index": 0, "marketHoursOnly": true }
+      },
+      "intraday-pass-1": {
+        "endpoint": "/internal/scheduler/daily-charts-pass",
+        "cron": "1,6,11,16,21,26,31,36,41,46,51,56 13-21 * * 1-5",
+        "data": { "index": 1, "marketHoursOnly": true }
+      },
+      "intraday-pass-2": {
+        "endpoint": "/internal/scheduler/daily-charts-pass",
+        "cron": "2,7,12,17,22,27,32,37,42,47,52,57 13-21 * * 1-5",
+        "data": { "index": 2, "marketHoursOnly": true }
+      },
+      "daily-charts-pass-0": {
+        "endpoint": "/internal/scheduler/daily-charts-pass",
+        "cron": "30 21,23,1,3,5 * * 1-6",
+        "data": { "index": 0 }
+      },
+      "daily-charts-pass-1": {
+        "endpoint": "/internal/scheduler/daily-charts-pass",
+        "cron": "33 21,23,1,3,5 * * 1-6",
+        "data": { "index": 1 }
+      },
+      "daily-charts-pass-2": {
+        "endpoint": "/internal/scheduler/daily-charts-pass",
+        "cron": "36 21,23,1,3,5 * * 1-6",
+        "data": { "index": 2 }
+      },
+      "daily-charts-next-pass": {
+        "endpoint": "/internal/scheduler/daily-charts-pass"
+      }
+    }
+  },
+  "menu": {
+    "items": [
+      {
+        "label": "Post today's charts",
+        "description": "Build and post the MoatWatch chart grid now",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/post-create"
+      },
+      {
+        "label": "Re-post latest session (force)",
+        "description": "Republish the latest session even if already posted - creates a duplicate",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/post-force"
+      }
+    ]
+  },
+  "forms": {
+    "exampleForm": "/internal/form/example-submit"
+  },
+  "dev": {
+    "subreddit": "TheMoat"
+  },
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build"
+  }
+}
