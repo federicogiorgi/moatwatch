@@ -1,15 +1,14 @@
 /**
- * The watchlist, as Twelve Data symbols.
+ * The watchlist.
  *
- * Every symbol here was confirmed against Twelve Data's reference endpoints
- * before being trusted (https://api.twelvedata.com/stocks?symbol=..., and
- * /etf for SPY). Do not add a symbol without checking it the same way.
+ * Every symbol here was confirmed against live Yahoo before being trusted:
+ * fetch it through vendorSymbol/toBars/parseSessions and check that a real
+ * session comes back. Do not add a symbol without checking it the same way -
+ * a wrong ticker ships as a silent "no data" panel that nobody notices.
  *
- * On the index panel: Twelve Data's free tier does not serve the S&P 500
- * index itself - SPX, GSPC and US500 all come back empty - so the large
- * panel tracks SPY, the SPDR S&P 500 ETF, instead. It follows the index to
- * within a fraction of a percent. The label says so rather than implying we
- * have the index.
+ * The eight small panels are ordered alphabetically by display name, which is
+ * the order they are read in on the post. The index is not part of that
+ * ordering; it is the large panel and always leads.
  */
 
 export type Instrument = { symbol: string; name: string };
@@ -25,13 +24,13 @@ export const INDEX: Instrument = { symbol: '^GSPC', name: 'S&P 500' };
 
 export const STOCKS: readonly Instrument[] = [
   { symbol: 'GOOGL', name: 'Alphabet' },
-  { symbol: 'AAPL', name: 'Apple' },
-  { symbol: 'KO', name: 'Coca-Cola' },
   { symbol: 'BRK.B', name: 'Berkshire Hathaway' },
   { symbol: 'CVX', name: 'Chevron' },
-  { symbol: 'SYM', name: 'Symbotic' },
+  { symbol: 'KO', name: 'Coca-Cola' },
+  { symbol: 'MCD', name: "McDonald's" },
   { symbol: 'PG', name: 'Procter & Gamble' },
-  { symbol: 'SPCX', name: "Space-X" },
+  { symbol: 'SPCX', name: 'Space-X' },
+  { symbol: 'SYM', name: 'Symbotic' },
 ];
 
 /** Index first, then the eight small panels in display order. */
