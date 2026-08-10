@@ -5,6 +5,7 @@ import {
   tallyVotes,
   rankBoard,
   unknownSymbols,
+  isVotingComment,
   BASELINE_VOTE,
 } from '../src/shared/tickers.ts';
 import {
@@ -203,6 +204,71 @@ console.log('\n11. the deadline quoted elsewhere');
   ok('spring gap: Rome', at('2026-03-09', 'Rome').time, '21:00');
   // ...and once Europe catches up, the usual gap returns.
   ok('after Europe shifts: London', at('2026-04-13', 'London').time, '21:00');
+}
+
+console.log('\n12. REGRESSION, 10 Aug 2026: the sticky voted for its own examples');
+{
+  const S = '2026-08-10';
+  const inWindow = (session, at) => countsTowardBoard(session, at);
+  const noon = new Date(Date.UTC(2026, 7, 10, 16, 0)); // 12:00 New York
+
+  // The real sticky. Its examples are real tickers, which is the whole trap.
+  const sticky = {
+    id: 't1_sticky',
+    authorName: 'moatwatch',
+    createdAt: noon,
+    body:
+      'Write the ticker with a dollar sign, in capitals: $GOOGL, $NVDA, $BRK.B.' +
+      ' Every mention is a vote.',
+  };
+  const reader = {
+    id: 't1_reader',
+    authorName: 'Crucco',
+    createdAt: noon,
+    body: '$SPCE',
+  };
+
+  ok('sticky quotes three real tickers', parseMentions(sticky.body).join(), 'GOOGL,NVDA,BRK.B');
+
+  // What shipped: author-only exclusion, and inside a scheduled task there is
+  // no current user, so appUser is empty and the check silently does nothing.
+  const brokenly = [sticky, reader].filter((c) =>
+    isVotingComment(c, { session: S, appUser: '', inWindow })
+  );
+  const brokenBoard = rankBoard(
+    tallyVotes(brokenly.map((c) => c.body), DEFAULTS),
+    (s) => s !== 'GOOGL' || true
+  );
+  ok('reproduces the bug: NVDA on the board', brokenBoard.includes('NVDA'), true);
+
+  // The fix: the sticky's id is recorded when posted, so no name resolution
+  // is needed for the comment that actually matters.
+  const fixed = [sticky, reader].filter((c) =>
+    isVotingComment(c, {
+      session: S,
+      appUser: '',
+      excludeIds: ['t1_sticky'],
+      inWindow,
+    })
+  );
+  ok('fix: only the reader is counted', fixed.length, 1);
+  const board = rankBoard(tallyVotes(fixed.map((c) => c.body), DEFAULTS), all);
+  ok('fix: NVDA is gone', board.includes('NVDA'), false);
+  ok('fix: SPCE took the slot', board.includes('SPCE'), true);
+  ok('fix: SYM displaced, Z first', board.includes('SYM'), false);
+  ok('fix: board is still eight', board.length, 8);
+
+  // The author check still works when a name IS available.
+  const byName = [sticky, reader].filter((c) =>
+    isVotingComment(c, { session: S, appUser: 'moatwatch', inWindow })
+  );
+  ok('author exclusion still works alone', byName.length, 1);
+
+  // And the other exclusions survived the move.
+  const late = { ...reader, id: 't1_late', createdAt: new Date(Date.UTC(2026, 7, 10, 20, 12)) };
+  ok('16:12 comment does not vote', isVotingComment(late, { session: S, inWindow }), false);
+  const empty = { ...reader, id: 't1_empty', body: '' };
+  ok('empty body does not vote', isVotingComment(empty, { session: S, inWindow }), false);
 }
 
 console.log(fail === 0 ? '\nALL CHECKS PASSED' : `\n${fail} CHECK(S) FAILED`);

@@ -8,47 +8,93 @@
 
 import { reddit } from '@devvit/web/server';
 import { countsTowardBoard } from '../shared/clock';
+import { isVotingComment } from '../shared/tickers';
 
 /** Read no more than this many comments in one pass. */
 const COMMENT_LIMIT = 500;
+
+export type VotingRead = {
+  /** Bodies of the comments that may vote. */
+  texts: string[];
+  /** How many comments the post had in total. */
+  read: number;
+  /** How many were ours and therefore ignored. */
+  own: number;
+  /** How many arrived after voting closed. */
+  late: number;
+};
 
 /**
  * The text of every comment that may vote on `session`.
  *
  * Two exclusions, both load-bearing:
  *
- * The app's own comments never count. The stickied comment names every ticker
- * on the board, complete with dollar signs, so counting it would re-elect the
- * incumbents every single day and no nomination could ever win a slot.
+ * The app's own comments never count. The stickied comment spells out the
+ * rules using real tickers as examples - `$GOOGL`, `$NVDA`, `$BRK.B` - so
+ * counting it hands those three a vote every single pass, and a ticker nobody
+ * asked for takes a panel. That is not hypothetical: it is exactly what
+ * happened on 10 August 2026, when NVDA held a panel all day off the back of
+ * the app quoting itself.
+ *
+ * `excludeIds` is the reliable half of that. The sticky's id is recorded when
+ * it is posted, so the exclusion does not depend on being able to resolve who
+ * we are. The username check stays as a second line of defence for anything
+ * else we might ever post, but it must never be the only one: a scheduled
+ * task has no logged-in user, so `getCurrentUsername()` returns nothing there,
+ * and the previous version silently skipped the whole check when it did.
  *
  * Comments posted after 16:00 New York never count. Voting closes with the
  * market, and the sealing pass runs up to half an hour later.
  */
 export async function votingComments(
   postId: `t3_${string}`,
-  session: string
-): Promise<string[]> {
-  let appUser = '';
+  session: string,
+  excludeIds: readonly string[] = []
+): Promise<VotingRead> {
+  let appUser: string;
   try {
     appUser = (await reddit.getCurrentUsername()) ?? '';
   } catch {
-    // If we cannot establish who we are, we cannot prove a comment is not
-    // ours. Counting nothing is wrong, but counting our own ballot stuffing
-    // is worse, so fall back to excluding by the sticky's distinguished flag
-    // alone and log it.
-    console.warn('Could not resolve app username; sticky may be counted.');
+    appUser = '';
+  }
+  if (!appUser) {
+    // Not fatal - `excludeIds` covers the comment that actually matters - but
+    // it must be visible, because this is the condition under which the old
+    // code quietly counted its own ballot.
+    console.warn(
+      'Could not resolve app username; relying on recorded comment ids alone.'
+    );
   }
 
+  const skip = new Set(excludeIds);
   const listing = await reddit.getComments({ postId, limit: COMMENT_LIMIT });
   const all = await listing.all();
 
-  const texts: string[] = [];
+  const out: VotingRead = { texts: [], read: all.length, own: 0, late: 0 };
+
   for (const c of all) {
-    if (appUser && c.authorName === appUser) continue;
+    if (skip.has(c.id) || (appUser && c.authorName === appUser)) {
+      out.own++;
+      continue;
+    }
     if (!c.body) continue;
-    if (!countsTowardBoard(session, c.createdAt)) continue;
-    texts.push(c.body);
+    if (!countsTowardBoard(session, c.createdAt)) {
+      out.late++;
+      continue;
+    }
+    // The decision itself is shared/tickers.ts, so it is covered by tests.
+    // The two checks above are only here to keep the tallies for the log line.
+    if (
+      isVotingComment(c, {
+        session,
+        appUser,
+        excludeIds,
+        inWindow: countsTowardBoard,
+      })
+    ) {
+      out.texts.push(c.body);
+    }
   }
 
-  return texts;
+  return out;
 }

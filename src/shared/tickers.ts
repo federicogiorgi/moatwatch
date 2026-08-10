@@ -110,6 +110,46 @@ export function rankBoard(
     .map(([sym]) => sym);
 }
 
+/** The little we need to know about a comment to decide whether it votes. */
+export type VoteCandidate = {
+  id: string;
+  authorName?: string | undefined;
+  body?: string | undefined;
+  createdAt: Date | number;
+};
+
+/**
+ * Does this comment get a vote?
+ *
+ * This lives here, pure, because the version that lived in the server was
+ * untestable and was wrong. It excluded the app's own comment by comparing
+ * author names, and fell back to no exclusion at all when the app's name could
+ * not be resolved - which is the normal state inside a scheduled task, since
+ * there is no logged-in user there. The guard read `if (appUser && ...)`, so an
+ * empty name skipped it silently, with nothing logged. On 10 August 2026 that
+ * let the stickied comment vote for the tickers it uses as examples, and NVDA
+ * held a panel all day without a single reader asking for it.
+ *
+ * Hence `excludeIds`, which does not depend on resolving anything: the sticky's
+ * id is recorded when it is posted. The author check remains as a second line
+ * of defence, never as the only one.
+ */
+export function isVotingComment(
+  comment: VoteCandidate,
+  opts: {
+    session: string;
+    appUser?: string | undefined;
+    excludeIds?: readonly string[] | undefined;
+    /** Injected so this stays pure; server passes clock.countsTowardBoard. */
+    inWindow: (session: string, createdAt: Date | number) => boolean;
+  }
+): boolean {
+  if (opts.excludeIds?.includes(comment.id)) return false;
+  if (opts.appUser && comment.authorName === opts.appUser) return false;
+  if (!comment.body) return false;
+  return opts.inWindow(opts.session, comment.createdAt);
+}
+
 /**
  * Which nominated symbols are new, and therefore need checking against the
  * vendor before they can be trusted onto the board.

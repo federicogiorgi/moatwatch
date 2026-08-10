@@ -17,6 +17,7 @@ import { dayChangePct, renderCharts } from '../../shared/charts';
 import type { ChartsPayload, SeriesMap } from '../../shared/charts';
 import {
   MARKET_CLOSE_ET,
+  MARKET_OPEN_ET,
   closeTimesElsewhere,
   isSessionComplete,
   todayEastern,
@@ -45,6 +46,16 @@ const FINALIZED_KEY = 'finalizedSession';
 const TRADABLE_KEY = 'tradableSymbols';
 
 /**
+ * Our own stickied comment on a given post.
+ *
+ * Recorded so the vote count can exclude it by id. The sticky quotes real
+ * tickers as examples, so counting it gives those tickers a vote on every
+ * pass - and identifying it by author is not dependable, because a scheduled
+ * task has no current user to compare against.
+ */
+const stickyKey = (postId: string) => `sticky:${postId}`;
+
+/**
  * Which symbols hold the panels right now.
  *
  * Recomputed every pass from the post's comments, so the board mutates through
@@ -61,16 +72,28 @@ async function resolveOrder(
   // Before a post exists there is nothing to have commented on.
   if (!postId) return [...ORDER];
 
-  let texts: string[];
+  let read;
   try {
-    texts = await votingComments(postId, session);
+    const sticky = await redis.get(stickyKey(postId));
+    read = await votingComments(postId, session, sticky ? [sticky] : []);
   } catch (error) {
     // A board is not worth losing the post over. Fall back to the owner's.
     console.warn(`Could not read comments, using default board: ${error}`);
     return [...ORDER];
   }
 
-  const votes = tallyVotes(texts, DEFAULT_BOARD);
+  const votes = tallyVotes(read.texts, DEFAULT_BOARD);
+
+  // Say what was actually counted. When the board last went wrong the logs
+  // recorded only the outcome, so there was no way to tell a miscount from a
+  // comment that was never read.
+  const nominated = [...votes.entries()]
+    .filter(([s]) => !DEFAULT_BOARD.includes(s))
+    .map(([s, v]) => `${s}=${v}`);
+  console.log(
+    `Comments: ${read.read} on post, ${read.own} ours, ${read.late} after close, ` +
+      `${read.texts.length} counted. Nominated: ${nominated.join(' ') || 'none'}.`
+  );
 
   const cachedRaw = await redis.get(TRADABLE_KEY);
   const cached: Record<string, boolean> = cachedRaw ? JSON.parse(cachedRaw) : {};
@@ -126,13 +149,15 @@ function stickyText(session: string): string {
   // Paragraphs, joined by blank lines: Reddit's markdown ignores a single
   // newline, so anything joined by one would run together on the page.
   return [
-    'Write the ticker with a dollar sign, in capitals: $GOOGL, $NVDA, $BRK.B.' +
+    'Hi folks! Do you want your favourite stock to appear in the graph?', 
+			
+	'Write the ticker with a dollar sign, in capitals: $GOOGL, $NVDA, $BRK.B.' +
       ' Every mention is a vote, and the eight best-supported tickers take the' +
       ` eight small panels. ${INDEX.name} always keeps the big one.`,
 
     'GOOGL, googl, $googl and Google do not count.',
 
-    `Comments are counted until ${MARKET_CLOSE_ET} New York time, when the` +
+    `Comments are counted between ${MARKET_OPEN_ET} and ${MARKET_CLOSE_ET} New York time, when the` +
       ` market closes and this post is sealed. That is ${elsewhere}.`,
 
     'On the next market open, the board resets and the race starts again from zero.',
@@ -325,6 +350,10 @@ async function reconcile(
     text: stickyText(session),
   });
   await comment.distinguish(true); // true = also sticky it
+
+  // Recorded before anything can read it back: this is what keeps the app's
+  // own examples out of the vote count.
+  await redis.set(stickyKey(post.id), comment.id);
 
   if (action.kind === 'create-final') {
     await redis.set(FINALIZED_KEY, session);
