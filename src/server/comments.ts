@@ -70,6 +70,19 @@ export async function votingComments(
   const listing = await reddit.getComments({ postId, limit: COMMENT_LIMIT });
   const all = await listing.all();
 
+  // Every comment the API handed back, itemised.
+  //
+  // On 10 August this call returned the app's own stickied comment but not a
+  // reader's top-level comment on the same post, and the logs recorded only
+  // the outcome - so there was no way to tell whether the comment had been
+  // read and discarded, or never returned at all. Those are entirely
+  // different bugs and they looked identical. They do not any more.
+  for (const c of all.slice(0, 25)) {
+    const when = new Date(c.createdAt).toISOString();
+    const body = (c.body ?? '').replace(/\s+/g, ' ').slice(0, 60);
+    console.log(`  comment ${c.id} by ${c.authorName ?? '?'} at ${when}: ${body}`);
+  }
+
   const out: VotingRead = { texts: [], read: all.length, own: 0, late: 0 };
 
   for (const c of all) {
