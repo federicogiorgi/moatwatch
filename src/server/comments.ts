@@ -13,6 +13,29 @@ import { isVotingComment } from '../shared/tickers';
 /** Read no more than this many comments in one pass. */
 const COMMENT_LIMIT = 500;
 
+/**
+ * Comments fetched per request as the listing is paged through.
+ *
+ * This is not optional, and leaving it out is what broke the whole feature on
+ * 10 and 11 August. `getComments({ postId, limit })` without a page size
+ * returned exactly ONE comment - and because a stickied comment sorts to the
+ * top, that one comment was always the app's own. Readers' nominations were
+ * never returned at all, so no vote could ever be counted, while the sticky's
+ * own examples voted on every pass. Devvit's own documented example pairs
+ * `limit` with `pageSize`; the omission is silent and looks like an empty
+ * post rather than a paging fault.
+ */
+const PAGE_SIZE = 100;
+
+/**
+ * How deep into reply threads to read.
+ *
+ * A reply to the stickied comment is the obvious place to answer "which ticker
+ * do you want?", so replies have to vote too. Without a depth the listing does
+ * not reliably descend past the top level.
+ */
+const DEPTH = 10;
+
 export type VotingRead = {
   /** Bodies of the comments that may vote. */
   texts: string[];
@@ -67,7 +90,13 @@ export async function votingComments(
   }
 
   const skip = new Set(excludeIds);
-  const listing = await reddit.getComments({ postId, limit: COMMENT_LIMIT });
+  const listing = await reddit.getComments({
+    postId,
+    limit: COMMENT_LIMIT,
+    pageSize: PAGE_SIZE,
+    depth: DEPTH,
+    sort: 'new',
+  });
   const all = await listing.all();
 
   // Every comment the API handed back, itemised.
