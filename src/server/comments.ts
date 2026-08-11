@@ -74,9 +74,17 @@ export async function votingComments(
   session: string,
   excludeIds: readonly string[] = []
 ): Promise<VotingRead> {
+  // getAppUser(), NOT getCurrentUsername().
+  //
+  // A scheduled task has no current user, and getCurrentUsername() resolves to
+  // the human who owns the installation - u/Crucco - rather than to the app.
+  // So the check meant to keep the app from voting for itself was instead
+  // silently discarding the owner's own vote: on 11 August two readers wrote
+  // $SPCE, one of them the owner, and the tally recorded a single vote.
+  // getAppUser() is the account the app actually posts as.
   let appUser: string;
   try {
-    appUser = (await reddit.getCurrentUsername()) ?? '';
+    appUser = (await reddit.getAppUser())?.username ?? '';
   } catch {
     appUser = '';
   }
