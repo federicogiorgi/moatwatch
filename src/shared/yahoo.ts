@@ -16,6 +16,8 @@ export type YahooChart = {
         previousClose?: number;
         regularMarketPrice?: number;
         chartPreviousClose?: number;
+        shortName?: string;
+        longName?: string;
       };
       timestamp?: number[];
       indicators?: { quote?: { close?: (number | null)[] }[] };
@@ -60,6 +62,22 @@ export function toOfficial(
     previousClose: positive(meta?.previousClose),
     lastPrice: positive(meta?.regularMarketPrice),
   };
+}
+
+/**
+ * The company name Yahoo knows this symbol by.
+ *
+ * Needed because readers nominate arbitrary tickers, and a panel labelled
+ * "SPCE" says far less than one labelled "Virgin Galactic". `shortName` is
+ * preferred: `longName` is the full registered title and is longer still.
+ * Callers tidy the legal suffix off - see watchlist.tidyCompanyName.
+ */
+export function toVendorName(
+  result: NonNullable<YahooChart['chart']>['result']
+): string | undefined {
+  const meta = result?.[0]?.meta;
+  const name = meta?.shortName ?? meta?.longName;
+  return typeof name === 'string' && name.trim() ? name.trim() : undefined;
 }
 
 /**

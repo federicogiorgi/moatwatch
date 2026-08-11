@@ -30,8 +30,8 @@
 import type { SeriesMap } from '../shared/charts';
 import { applyOfficial, parseSessions } from '../shared/session';
 import type { YahooChart } from '../shared/yahoo';
-import { toBars, toOfficial, vendorSymbol } from '../shared/yahoo';
-import { NAMES, ORDER } from '../shared/watchlist';
+import { toBars, toOfficial, toVendorName, vendorSymbol } from '../shared/yahoo';
+import { NAMES, ORDER, tidyCompanyName } from '../shared/watchlist';
 
 const ENDPOINT = 'https://query1.finance.yahoo.com/v8/finance/chart';
 
@@ -70,10 +70,29 @@ async function fetchSeries(symbol: string) {
 
   // Swap the sampled endpoints for the vendor's official ones. Costs no extra
   // request - the figures ride along in the same response.
-  return applyOfficial(parsed, toOfficial(result));
+  return {
+    ...applyOfficial(parsed, toOfficial(result)),
+    vendorName: toVendorName(result),
+  };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * One symbol's series, labelled for display.
+ *
+ * Our own spelling wins wherever we have one: the owner chose "Space-X" and
+ * "Coca-Cola" deliberately, and a vendor name must never overwrite them.
+ * Otherwise the vendor's name is tidied of its legal suffix, so a nominated
+ * ticker reads as "Virgin Galactic" instead of "SPCE".
+ */
+async function namedSeries(symbol: string) {
+  const { vendorName, ...parsed } = await fetchSeries(symbol);
+  return {
+    name: NAMES[symbol] ?? (vendorName ? tidyCompanyName(vendorName) : symbol),
+    ...parsed,
+  };
+}
 
 /**
  * Does the vendor actually serve this symbol?
@@ -155,10 +174,10 @@ export async function fetchAll(
     if (!first) await sleep(SPACING_MS);
     first = false;
 
-    const name = NAMES[symbol] ?? symbol;
     try {
-      series[symbol] = { name, ...(await fetchSeries(symbol)) };
+      series[symbol] = await namedSeries(symbol);
     } catch (error) {
+      const name = NAMES[symbol] ?? symbol;
       const first_ = error instanceof Error ? error.message : String(error);
 
       if (Date.now() - startedAt > RETRY_DEADLINE_MS) {
@@ -169,7 +188,7 @@ export async function fetchAll(
 
       await sleep(RETRY_MS);
       try {
-        series[symbol] = { name, ...(await fetchSeries(symbol)) };
+        series[symbol] = await namedSeries(symbol);
         console.log(`${symbol} recovered on retry after: ${first_}`);
       } catch (retryError) {
         const second = retryError instanceof Error ? retryError.message : String(retryError);

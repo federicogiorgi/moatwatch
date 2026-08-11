@@ -13,6 +13,7 @@ import {
   closeTimesElsewhere,
   easternInstant,
 } from '../src/shared/clock.ts';
+import { tidyCompanyName } from '../src/shared/watchlist.ts';
 
 let fail = 0;
 const ok = (label, got, want) => {
@@ -269,6 +270,25 @@ console.log('\n12. REGRESSION, 10 Aug 2026: the sticky voted for its own example
   ok('16:12 comment does not vote', isVotingComment(late, { session: S, inWindow }), false);
   const empty = { ...reader, id: 't1_empty', body: '' };
   ok('empty body does not vote', isVotingComment(empty, { session: S, inWindow }), false);
+}
+
+console.log('\n13. nominated tickers get a readable company name');
+{
+  // Real Yahoo shortName values, and what has to fit a 90px panel.
+  ok('Virgin Galactic', tidyCompanyName('Virgin Galactic Holdings, Inc.'), 'Virgin Galactic');
+  ok('Energy Recovery', tidyCompanyName('Energy Recovery, Inc.'), 'Energy Recovery');
+  ok('Alphabet', tidyCompanyName('Alphabet Inc.'), 'Alphabet');
+  ok('Coca-Cola loses "The" and "Company"', tidyCompanyName('The Coca-Cola Company'), 'Coca-Cola');
+  ok('NVIDIA', tidyCompanyName('NVIDIA Corporation'), 'NVIDIA');
+  ok('Berkshire', tidyCompanyName('Berkshire Hathaway Inc. New'), 'Berkshire Hathaway');
+  ok('stacked suffixes', tidyCompanyName('Acme Holdings Group Ltd.'), 'Acme');
+
+  // Must not chew into the actual name.
+  ok('Costco keeps Wholesale', tidyCompanyName('Costco Wholesale Corporation'), 'Costco Wholesale');
+  ok('Cisco is not a "co"', tidyCompanyName('Cisco Systems, Inc.'), 'Cisco Systems');
+  ok('already clean is untouched', tidyCompanyName('Chevron'), 'Chevron');
+  ok('never returns empty', tidyCompanyName('Inc.'), 'Inc.');
+  ok('whitespace only falls back', tidyCompanyName('  Holdings  '), 'Holdings');
 }
 
 console.log(fail === 0 ? '\nALL CHECKS PASSED' : `\n${fail} CHECK(S) FAILED`);

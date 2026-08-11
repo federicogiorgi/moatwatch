@@ -71,6 +71,50 @@ export const NAMES: Readonly<Record<string, string>> = Object.fromEntries(
 );
 
 /**
+ * Legal furniture to drop off the end of a vendor-supplied company name.
+ *
+ * Order matters only in that the list is applied repeatedly: "Virgin Galactic
+ * Holdings, Inc." needs two passes to become "Virgin Galactic".
+ */
+const SUFFIXES = [
+  'incorporated', 'inc', 'corporation', 'corp', 'company', 'co',
+  'holdings', 'holding', 'group', 'plc', 'limited', 'ltd', 'llc',
+  'ag', 'se', 'nv', 'sa', 'nsp', 'new',
+  'common stock', 'ordinary shares', 'class a', 'class b', 'class c',
+];
+
+/**
+ * A vendor company name, cut down to something that fits a panel.
+ *
+ * Yahoo answers with the registered name - "Virgin Galactic Holdings, Inc.",
+ * "Energy Recovery, Inc." - and the panels are as narrow as 90 pixels, which
+ * is why the layout already falls back to the ticker when there is no room.
+ * Trimming the legal suffix is what makes the difference between a name that
+ * fits and one that never shows at all.
+ *
+ * Only ever used when we have no curated name of our own: the owner's
+ * spellings ("Space-X", "Coca-Cola") stay exactly as he wrote them.
+ */
+export function tidyCompanyName(raw: string): string {
+  let out = raw.trim().replace(/^The\s+/i, '');
+
+  // Strip one suffix at a time until nothing else matches, so stacked
+  // suffixes ("Holdings, Inc.") come off completely.
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const suffix of SUFFIXES) {
+      const re = new RegExp(`[,\\s]+${suffix}\\.?$`, 'i');
+      if (re.test(out)) {
+        out = out.replace(re, '');
+        changed = true;
+      }
+    }
+  }
+
+  return out.replace(/[,\s]+$/, '').trim() || raw.trim();
+}
+
+/**
  * The watchlist is fetched in one pass. There is no chunking any more.
  *
  * It used to be split into three chunks across three scheduled passes, because
